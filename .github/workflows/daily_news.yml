@@ -1,0 +1,26 @@
+name: JejuBot Scheduler
+
+on:
+  schedule:
+    # 1. 한국 08:00 (UTC 23:00)
+    - cron: '0 23 * * *'
+    # 2. 한국 17:00 (UTC 08:00)
+    - cron: '0 8 * * *'
+  # 수동 실행 버튼 (테스트용)
+  workflow_dispatch:
+
+jobs:
+  run-jejubot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - run: pip install requests
+      - name: 제주봇 실행
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: python news_bot.py
