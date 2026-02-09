@@ -1,103 +1,121 @@
 import requests
+import urllib.parse
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
-SERVICE_KEY = os.environ.get('AIRPORT_KEY')
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_URL')
-DATA_FILE = 'sent_data_v6.json'
+# 1. 환경변수 설정
+SLACK_URL = os.environ['SLACK_WEBHOOK_URL']
+NAVER_ID = os.environ['NAVER_CLIENT_ID']
+NAVER_SECRET = os.environ['NAVER_CLIENT_SECRET']
 
-def send_slack(msg):
-    try:
-        requests.post(SLACK_WEBHOOK_URL, json={"text": msg})
-    except Exception as e:
-        print(f"슬랙 전송 에러: {e}")
-
-def get_flight_data(io_type):
-    url = "http://openapi.airport.co.kr/service/rest/FlightStatusList/getFlightStatusList"
-    params = {
-        'serviceKey': SERVICE_KEY,
-        'schLineType': 'D',
-        'schIOType': io_type,
-        'schAirCode': 'CJU',
-        'schStTime': '0600',
-        'schEdTime': '2359',
-        'numOfRows': '500',
-        '_type': 'json'
+# 2. 뉴스 검색 함수
+def get_news(keyword, count):
+    enc_text = urllib.parse.quote(keyword)
+    # sort='sim': 정확도순, display=count: 개수
+    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={count}&sort=sim"
+    
+    headers = {
+        "X-Naver-Client-Id": NAVER_ID,
+        "X-Naver-Client-Secret": NAVER_SECRET
     }
+    
     try:
-        res = requests.get(url, params=params, timeout=10)
-        items = res.json()['response']['body']['items']['item']
-        return [items] if isinstance(items, dict) else items
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json().get('items', [])
+        return []
     except:
         return []
 
-def check_jeju():
-    # [시간 제한 로직] 한국 시간 기준 06:00~22:15 사이가 아니면 종료
-    # GitHub 서버 시간은 UTC이므로 9시간을 더해 한국 시간을 계산합니다.
-    now_kst = datetime.utcnow() + timedelta(hours=9)
-    current_hour = now_kst.hour
+# 3. 메인 실행 함수
+def send_alert():
+    # 날짜 서식 (예: 2026. 02. 10. 화요일)
+    today = datetime.now().strftime("%Y. %m. %d. (%a)")
     
-    if not (6 <= current_hour <= 22):
-        print(f"현재 시간 {current_hour}시: 작동 시간이 아니므로 종료합니다.")
-        return
-
-    if not SERVICE_KEY or not SLACK_WEBHOOK_URL: return
-
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            sent_ids = set(json.load(f))
-    else:
-        sent_ids = set()
-
-    today_str = now_kst.strftime("%Y%m%d")
-    sent_ids = {x for x in sent_ids if x.startswith(today_str)}
-
-    all_flights = [('도착', f) for f in get_flight_data('I')] + [('출발', f) for f in get_flight_data('O')]
+    # 🎨 [설정] (보여질 제목, 실제 검색어, 가져올 개수)
+    search_configs = [
+        ("🚙 제주 렌터카", "제주 (렌터카 | 렌트카)", 3),
+        ("🚕 제주 모빌리티", "제주 모빌리티", 1),
+        ("🚙 쏘카(SOCAR)", "제주 쏘카", 1),
+        ("🌴 제주 관광", "제주 관광", 3),
+        ("✈️ 제주 공항", "제주 공항", 1),
+        ("🌤️ 제주 날씨", "제주 예보", 1)
+    ]
     
-    new_count = 0
-    for type_name, f in all_flights:
-        raw_status = f.get('rmkKor')
-        status = str(raw_status).strip() if raw_status else "예정"
-        std = str(f.get('std', '0000'))
-        etd = str(f.get('etd')) if f.get('etd') else std
-
-        try:
-            std_int, etd_int = int(std), int(etd)
-        except:
-            std_int, etd_int = 0, 0
-
-        is_cancelled = "결항" in status
-        is_delayed = etd_int > std_int or "지연" in status
-
-        if is_cancelled or is_delayed:
-            flight_num = f.get('airFln', 'Unknown')
-            unique_id = f"{today_str}_{flight_num}_{status}_{etd}"
+    # 🧱 [블록 킷] 메시지 구성 시작
+    blocks = []
+    
+    # (1) 헤더 (가장 큰 제목)
+    blocks.append({
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": f"📅 {today} 뉴스 브리핑",
+            "emoji": True
+        }
+    })
+    
+    # (2) 주제별 뉴스 블록 추가
+    for display_title, keyword, count in search_configs:
+        news_items = get_news(keyword, count)
+        
+        # 구분선 (주제마다 상단에 배치하여 깔끔하게 분리)
+        blocks.append({"type": "divider"})
+        
+        # 주제 제목 (진하게)
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{display_title}*"
+            }
+        })
+        
+        if not news_items:
+            # 뉴스가 없을 때 (작은 회색 글씨)
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "🚫 관련 최신 뉴스가 없습니다."}]
+            })
+        else:
+            # 뉴스가 있을 때 (리스트 형태)
+            news_text = ""
+            for item in news_items:
+                # 제목 정제 (따옴표 및 태그 제거)
+                title = item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', "'")
+                link = item['link']
+                # • <링크|제목> 형태로 클릭 가능한 텍스트 생성
+                news_text += f"• <{link}|{title}>\n"
             
-            if unique_id not in sent_ids:
-                airline = f.get('airlineKorean', '')
-                city = f.get('boardingKor', '') if type_name == '도착' else f.get('arrivedKor', '')
-                route = f"{city} → 제주" if type_name == '도착' else f"제주 → {city}"
-                
-                sched_time = f"{std[:2]}:{std[2:]}"
-                etd_time = f"{etd[:2]}:{etd[2:]}"
-                
-                emoji = "🚫" if is_cancelled else "⚠️"
-                title = f"국내선 {type_name} {'결항' if is_cancelled else '지연'} 알림"
+            # 본문 추가
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": news_text
+                }
+            })
 
-                msg = (f"{emoji} *{title}*\n"
-                       f"```{airline} {flight_num}\n"
-                       f"{route}\n"
-                       f"{sched_time} → {etd_time}\n"
-                       f"상태: {status}```")
-                
-                send_slack(msg)
-                sent_ids.add(unique_id)
-                new_count += 1
-    
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(list(sent_ids), f, ensure_ascii=False)
-    print(f"완료: {new_count}건 전송")
+    # (3) 하단 푸터 (출처 표시)
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "📢 Generated by JejuBot | Data Source: Naver Search API"
+            }
+        ]
+    })
+
+    # 📨 전송 (blocks 파라미터 사용 - 이게 핵심!)
+    payload = {
+        "text": f"📅 {today} 제주 뉴스 브리핑이 도착했습니다.", # 알림 팝업용 텍스트
+        "blocks": blocks
+    }
+    requests.post(SLACK_URL, data=json.dumps(payload))
+    print("✅ 전송 완료")
 
 if __name__ == "__main__":
-    check_jeju()
+    send_alert()
