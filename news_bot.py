@@ -12,8 +12,10 @@ NAVER_SECRET = os.environ['NAVER_CLIENT_SECRET']
 # 2. 뉴스 검색 함수
 def get_news(keyword, count):
     enc_text = urllib.parse.quote(keyword)
-    # sort='sim': 정확도순, display=count: 개수
-    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={count}&sort=sim"
+    
+    # 🔴 수정됨: sort='date' (최신순)으로 변경!
+    # 이제 무조건 가장 최근에 올라온 기사부터 가져옵니다.
+    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={count}&sort=date"
     
     headers = {
         "X-Naver-Client-Id": NAVER_ID,
@@ -30,7 +32,7 @@ def get_news(keyword, count):
 
 # 3. 메인 실행 함수
 def send_alert():
-    # 날짜 서식 (예: 2026. 02. 10. 화요일)
+    # 날짜 서식
     today = datetime.now().strftime("%Y. %m. %d. (%a)")
     
     # 🎨 [설정] (보여질 제목, 실제 검색어, 가져올 개수)
@@ -43,10 +45,10 @@ def send_alert():
         ("🌤️ 제주 날씨", "제주 예보", 1)
     ]
     
-    # 🧱 [블록 킷] 메시지 구성 시작
+    # 🧱 [블록 킷] 메시지 구성
     blocks = []
     
-    # (1) 헤더 (가장 큰 제목)
+    # (1) 헤더
     blocks.append({
         "type": "header",
         "text": {
@@ -56,14 +58,11 @@ def send_alert():
         }
     })
     
-    # (2) 주제별 뉴스 블록 추가
+    # (2) 주제별 뉴스 블록
     for display_title, keyword, count in search_configs:
         news_items = get_news(keyword, count)
         
-        # 구분선 (주제마다 상단에 배치하여 깔끔하게 분리)
         blocks.append({"type": "divider"})
-        
-        # 주제 제목 (진하게)
         blocks.append({
             "type": "section",
             "text": {
@@ -73,22 +72,17 @@ def send_alert():
         })
         
         if not news_items:
-            # 뉴스가 없을 때 (작은 회색 글씨)
             blocks.append({
                 "type": "context",
                 "elements": [{"type": "mrkdwn", "text": "🚫 관련 최신 뉴스가 없습니다."}]
             })
         else:
-            # 뉴스가 있을 때 (리스트 형태)
             news_text = ""
             for item in news_items:
-                # 제목 정제 (따옴표 및 태그 제거)
                 title = item['title'].replace('<b>', '').replace('</b>', '').replace('&quot;', "'")
                 link = item['link']
-                # • <링크|제목> 형태로 클릭 가능한 텍스트 생성
                 news_text += f"• <{link}|{title}>\n"
             
-            # 본문 추가
             blocks.append({
                 "type": "section",
                 "text": {
@@ -97,7 +91,7 @@ def send_alert():
                 }
             })
 
-    # (3) 하단 푸터 (출처 표시)
+    # (3) 하단 푸터
     blocks.append({"type": "divider"})
     blocks.append({
         "type": "context",
@@ -109,9 +103,9 @@ def send_alert():
         ]
     })
 
-    # 📨 전송 (blocks 파라미터 사용 - 이게 핵심!)
+    # 전송
     payload = {
-        "text": f"📅 {today} 제주 뉴스 브리핑이 도착했습니다.", # 알림 팝업용 텍스트
+        "text": f"📅 {today} 제주 뉴스 브리핑이 도착했습니다.",
         "blocks": blocks
     }
     requests.post(SLACK_URL, data=json.dumps(payload))
