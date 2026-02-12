@@ -13,9 +13,8 @@ NAVER_SECRET = os.environ['NAVER_CLIENT_SECRET']
 def get_news(keyword, count):
     enc_text = urllib.parse.quote(keyword)
     
-    # 🔴 수정됨: sort='date' (최신순)으로 변경!
-    # 이제 무조건 가장 최근에 올라온 기사부터 가져옵니다.
-    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={count}&sort=date"
+    # ✨ 다시 '정확도/중요도 순(sim)'으로 변경! (가십성, 중복 기사 차단)
+    url = f"https://openapi.naver.com/v1/search/news.json?query={enc_text}&display={count}&sort=sim"
     
     headers = {
         "X-Naver-Client-Id": NAVER_ID,
@@ -32,10 +31,9 @@ def get_news(keyword, count):
 
 # 3. 메인 실행 함수
 def send_alert():
-    # 날짜 서식
     today = datetime.now().strftime("%Y. %m. %d. (%a)")
     
-    # 🎨 [설정] (보여질 제목, 실제 검색어, 가져올 개수)
+    # 🎨 검색어 설정
     search_configs = [
         ("🚙 제주 렌터카", "제주 (렌터카 | 렌트카)", 3),
         ("🚕 제주 모빌리티", "제주 모빌리티", 1),
@@ -45,7 +43,6 @@ def send_alert():
         ("🌤️ 제주 날씨", "제주 예보", 1)
     ]
     
-    # 🧱 [블록 킷] 메시지 구성
     blocks = []
     
     # (1) 헤더
@@ -74,7 +71,7 @@ def send_alert():
         if not news_items:
             blocks.append({
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": "🚫 관련 최신 뉴스가 없습니다."}]
+                "elements": [{"type": "mrkdwn", "text": "🚫 관련 주요 뉴스가 없습니다."}]
             })
         else:
             news_text = ""
@@ -91,7 +88,7 @@ def send_alert():
                 }
             })
 
-    # (3) 하단 푸터
+    # (3) 푸터
     blocks.append({"type": "divider"})
     blocks.append({
         "type": "context",
